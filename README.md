@@ -91,7 +91,7 @@ The same verbs work from the command line, for people and scripts: `uv run catal
 To reset the demo, stop the service (Ctrl-C), then from the repo root:
 
 ```bash
-git checkout examples/dev1 && rm -rf catalog.db examples/dev2/.claude/skills/*/
+git checkout examples/dev1 && rm -rf catalog.db examples/dev2/.claude/skills/release-note-draft
 ```
 
 ## How it works
