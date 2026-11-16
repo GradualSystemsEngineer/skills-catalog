@@ -9,3 +9,4 @@ TODO: full README in M5.
 - `POST /skills` also returns `published_at` alongside name, version and digest, so the CLI can confirm when.
 - Observed with Claude Code 2.1.325 (`claude -p` in `examples/dev2`): after `retrieve_skill`, the same session listed and could invoke the new skill without a restart, and a new session also listed it. The short-lived `.staging-*` folder never appeared as a skill. Interactive mode to be confirmed in the rehearsal.
 - The test fixtures in `tests/skills/` double as the extra catalog content for the demo, so discovery has something to rank.
+- MCP tools are annotated `-> dict[str, Any]`, not `-> dict`. With `mcp` 2.3.0 a bare `dict` produced no output schema and no `structured_content` (text only), although the SDK docs say it should; found by the in-memory tests.
