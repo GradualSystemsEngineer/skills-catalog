@@ -149,6 +149,7 @@ Details the design doc left open, settled while building:
 - MCP tools are annotated `-> dict[str, Any]`, not `-> dict`. With `mcp` 2.3.0 a bare `dict` produced no output schema and no `structured_content`, only text, although the SDK docs say it should. The in-memory tests caught it.
 - `GET /skills/{name}/versions` returns `{"name": ..., "versions": [...]}` rather than a bare list, so the response names the skill it describes. `POST /skills` also returns `published_at`.
 - The skills in `tests/skills/` serve both the discovery tests and the demo catalog.
+- Names: `skills-catalog` (repo and package) and `catalog` (command) are working names. TODO(aaron): confirm or rename.
 
 Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session listed and could invoke the new skill without a restart, and a new session listed it too. The hidden `.staging-*` folder never appeared as a skill.
 
