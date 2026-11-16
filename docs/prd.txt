@@ -1,0 +1,372 @@
+Text extracted from prd.pdf for reading by tools. Tables are flattened; prd.pdf is the original.
+
+=== page 1 ===
+Skills Catalog PRD
+Owner: Glenn Weigold. Status: draft. Version 0.1.0.
+Skills Catalog
+One-sentence value proposition: "We help developers reuse each other's AI-
+assistant skills consistently, with little effort, by letting them publish a skill to a
+shared catalog that another developer's AI assistant can discover and retrieve
+on request."
+This is a time-boxed build exercise (~4 hours). It defines what to build and the
+product outcomes that matter; every technical choice, language, storage, how
+the assistant reaches the catalog, is yours. We care more about your thinking
+than about how much you ship.
+1. Problem Statement
+Current state: Developers each build their own reusable instructions for AI assistants ("skills").
+A skill lives locally, on the author's own machine, there's no shared place it exists. When one
+developer writes a good one, the only way for another to use it is for the author to hand that
+local copy over: send the file, or push it to a repo the other developer then clones.
+Pain: Because the skill only exists on the author's machine, every share is a copy made by hand,
+high-effort and immediately drifting out of sync. The second developer ends up with a stale
+copy, a slightly different version, or writes their own from scratch, so the same skill exists in
+several inconsistent forms, none of them a single source of truth.
+Impact: Duplicated effort and inconsistent results across developers. A shared skill that should
+spread cleanly instead fragments.
+2. Personas
+Persona Role Primary Pain Success State
+
+=== page 2 ===
+3. Goals and Success Metrics
+Evidence-light by design, this is a build exercise, not a funded product, so
+success is expressed as observable outcomes rather than baselined targets.
+Developer 1 Developer who
+has built a
+reusable skill
+The skill lives
+only on their
+machine; sharing
+it means handing
+over a local copy
+(file or repo), so
+others end up
+with divergent
+copies
+Publishes the
+skill once to the
+catalog; it's
+available for
+others with no
+further effort
+Developer 2 Developer who
+needs a skill for
+a task
+Doesn't know
+what already
+exists; reinvents
+or hunts down a
+colleague's copy
+Asks their AI
+assistant,
+discovers the
+published skill,
+and retrieves the
+same skill
+Developer 1 has
+Enable low-
+effort, consistent
+skill reuse
+Developer 1
+publishes a skill;
+Developer 2,
+through an AI
+assistant,
+discovers and
+retrieves the
+same skill, no file
+handoff, no repo
+sharing
+Not possible
+today (share a
+file or repo
+manually)
+Works end to
+end
+Goal Success Metric Baseline Target
+
+=== page 3 ===
+4. Domain Glossary
+Keep shared
+skills consistent
+over time
+When a skill
+changes, earlier
+versions remain
+available and the
+change is visible
+Copies drift
+silently
+History is
+retained and
+inspectable
+Skill A reusable unit of
+instructions for an AI
+assistant: a manifest
+plus optional
+supporting files.
+Skills Catalog
+Manifest The file that carries a
+skill's name,
+description, and
+instruction body.
+Skills Catalog
+Catalog The shared store
+developers publish
+skills to and retrieve
+them from.
+Skills Catalog
+Version A point-in-time state of
+a skill. Publishing a skill
+that already exists
+creates a new version;
+prior versions are
+retained.
+Skills Catalog
+Publish Adding a skill to the
+catalog so others can
+use it. Synonym: share.
+Skills Catalog
+Discover Finding skills in the
+catalog through an AI
+assistant.
+Skills Catalog
+Term Definition Bounded Context
+
+=== page 4 ===
+5. Use Cases
+UC-01: Publish a skill
+Actor: Developer 1
+Precondition: Developer 1 has a skill (a manifest, optionally with supporting files).
+Main flow:
+1. Developer 1 publishes the skill to the catalog.
+2. The catalog stores it and makes it available to others.
+Postcondition: The skill is discoverable and retrievable by another developer.
+Exceptions:
+Skill is missing a name, description, or body: it's rejected with an explanation; nothing partial is
+stored.
+UC-02: Discover a skill through an AI assistant
+Actor: Developer 2
+Precondition: At least one skill has been published.
+Main flow:
+1. Developer 2 asks their AI assistant, in natural language, whether a skill exists for a need.
+2. The assistant searches the catalog and returns matching skills.
+Postcondition: Developer 2 knows which relevant skills exist, without contacting the author.
+Exceptions:
+Nothing matches: the assistant clearly says so.
+UC-03: Retrieve a skill through an AI assistant
+Actor: Developer 2
+Precondition: The target skill has been published.
+Main flow:
+1. Developer 2 asks their AI assistant to get a named skill.
+Retrieve Getting a published
+skill from the catalog
+through an AI
+assistant.
+Skills Catalog
+
+=== page 5 ===
+2. The assistant retrieves the skill from the catalog, complete and unchanged.
+Postcondition: Developer 2 has the same skill Developer 1 published, ready to use.
+Exceptions:
+The skill doesn't exist: the assistant returns a clear "not found."
+UC-04: Publish a new version of an existing skill
+Actor: Developer 1
+Precondition: A skill with that name is already published.
+Main flow:
+1. Developer 1 publishes an updated skill under the same name.
+2. The catalog stores it as a new version and retains the previous one.
+Postcondition: The latest version is what others retrieve by default; earlier versions remain
+available and the history is visible.
+Exceptions:
+The update is malformed: it's rejected; the existing version(s) are untouched.
+6. Functional Requirements
+FR-01: Publish a skill
+Story: As Developer 1, I want to publish my skill to the catalog so another developer can reuse it
+without me handing over files.
+Acceptance Criteria:
+A developer can publish a skill (manifest + any supporting files) to the catalog.
+A published skill is available to another developer, complete.
+A skill missing a name, description, or body is rejected with an explanation; nothing partial is
+stored.
+Input/Output Example:
+FR-02: Discover skills through an AI assistant
+Story: As Developer 2, I want to ask my AI assistant what skills exist for a need so I can reuse
+one instead of writing my own.
+1 Input:  Developer 1 publishes skill "release-note-draft" (manifest + a
+template file)
+2 Output: Skill is stored in the catalog and available to others;
+confirmation returned
+
+=== page 6 ===
+Acceptance Criteria:
+Through an AI assistant, in natural language, a developer can find published skills that match
+a described need.
+Each result identifies the skill (at least name and description).
+When nothing matches, the assistant clearly says so.
+Input/Output Example:
+FR-03: Retrieve a skill through an AI assistant
+Story: As Developer 2, I want my AI assistant to retrieve a published skill so I get the same one
+Developer 1 has, ready to use.
+Acceptance Criteria:
+Through an AI assistant, a developer can retrieve a named skill.
+The retrieved skill is complete and unchanged from what was published (manifest +
+supporting files).
+Retrieving a skill that doesn't exist returns a clear "not found."
+Input/Output Example:
+FR-04: Version a skill
+Story: As Developer 1, I want publishing an updated skill to create a new version so changes are
+tracked and nothing is silently overwritten.
+Acceptance Criteria:
+Publishing a skill whose name already exists creates a new version; prior versions are
+retained.
+A developer can see a skill's version history.
+Retrieving a skill returns the latest version by default; an earlier version can be retrieved when
+asked for.
+Input/Output Example:
+1 Input:  Developer 2 asks their assistant "is there a skill for writing
+release notes?"
+2 Output: The assistant returns "release-note-draft" with its description
+1 Input:  Developer 2 asks their assistant "get me the release-note-draft
+skill"
+2 Output: The assistant returns the skill, intact and ready to use
+1 Input:  Developer 1 re-publishes "release-note-draft" with an edit
+2 Output: A new version is stored; the previous version is still
+available; history shows both
+
+=== page 7 ===
+7. Non-Functional Requirements
+Product-quality expectations, expressed as behaviors rather than
+infrastructure thresholds, this is a build exercise, so
+latency/throughput/storage targets are intentionally left to the builder. No
+numeric SLOs are prescribed.
+8. Out of Scope
+Consistency A retrieved skill is
+complete and
+unchanged from what
+was published, no
+silent loss or alteration.
+Publish then retrieve;
+compare against the
+original.
+Assistant-mediated
+access
+Discover and retrieve
+happen through an AI
+assistant acting for the
+developer on natural-
+language intent, not
+only a direct human-
+operated interface.
+Exercise
+discover/retrieve via an
+AI assistant.
+Responsiveness Discovery and retrieval
+are fast enough to feel
+interactive within an
+assistant conversation.
+Observe during a
+normal exchange.
+Attribute Requirement Measurement Method
+Authentication / access
+control
+Assume a trusted set
+of developers; a
+permission model isn't
+needed to prove reuse.
+Later phase
+Deferred Item Rationale Revisit When
+
+=== page 8 ===
+9. Assumptions and Constraints
+Assumptions:
+Developers reach the catalog through an AI assistant as the primary access path; if that isn't
+available, the access model changes.
+The skill format (manifest + optional supporting files) is sufficient for the skills developers
+want to share.
+Constraints:
+Time-boxed exercise (~4 hours). Scope accordingly, a smaller, coherent, working system
+beats a larger broken one.
+Self-contained: it should run on a reviewer's machine from a short README.
+10. Dependencies
+11. Release Phases
+Phase 1 — MVP (P0)
+Goal: Low-effort, consistent skill reuse between developers, with versioning.
+Includes:
+FR-01 (Publish)
+FR-02 (Discover through an AI assistant)
+FR-03 (Retrieve through an AI assistant)
+De-duplication of
+similar skills
+Detecting or merging
+near-identical skills is a
+refinement, not core to
+reuse.
+Later phase
+An AI
+assistant that
+can call into
+the catalog
+Access layer Builder's
+choice
+Low The builder
+decides how
+the assistant
+reaches the
+catalog.
+Dependency Type Owner /
+Team
+Risk Level Notes
+
+=== page 9 ===
+FR-04 (Version)
+Excluded from MVP: Authentication, de-duplication (see Section 8).
+Phase 2 — (P1)
+Goal: Intentionally open. Once the core loop works, what matters most next is a judgment call
+for the builder, the biggest gaps and the highest-value additions are left to be identified.
+12. Open Questions and Decision Log
+Open Questions
+Decision Log
+Q1 What are the
+most valuable
+additions once
+the core loop
+works?
+Builder Phase 2
+# Question Owner Due
+D1 Access is
+through an
+AI assistant
+Low-effort
+reuse is the
+point; the
+assistant is
+the access
+path
+2026-07-23 Glenn
+Weigold
+D2 Versioning is
+in scope for
+the MVP
+Consistency
+over time,
+see changes,
+don't
+overwrite
+silently
+2026-07-23 Glenn
+Weigold
+# Decision Rationale Date Decided By
+
+=== page 10 ===
+D3 Authenticatio
+n and de-
+duplication
+are out of
+scope
+Not needed
+to prove low-
+effort,
+consistent
+reuse
+2026-07-23 Glenn
+Weigold
