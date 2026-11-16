@@ -44,6 +44,9 @@ def parse_manifest(data: bytes) -> tuple[dict, str]:
     return front, "".join(lines[end + 1:])
 
 
+IGNORED_FILES = frozenset({".DS_Store"})  # Finder metadata: never read from a skill folder, never accepted in one
+
+
 def validate_path(path) -> str | None:
     """Return why a file path is not allowed, or None if it is fine."""
     bad = f"{path!r} is not allowed: paths must stay inside the skill."
@@ -53,6 +56,8 @@ def validate_path(path) -> str | None:
         return f"{path!r} is not allowed: paths must not contain control characters."
     if any(seg in ("", ".", "..") for seg in path.split("/")):
         return bad
+    if path.split("/")[-1] in IGNORED_FILES:
+        return f"{path!r} is not allowed: it is Finder metadata, not part of a skill."
     return None
 
 

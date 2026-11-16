@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from skills_catalog.domain import NAME_RE, sha256_hex, validate_path, version_digest
+from skills_catalog.domain import IGNORED_FILES, NAME_RE, sha256_hex, validate_path, version_digest
 
 
 class CatalogError(Exception):
@@ -50,13 +50,13 @@ def _request(cfg: Config, method: str, path: str, **kwargs) -> dict:
 
 
 def read_skill_dir(path) -> list[dict]:
-    """Every file under a skill folder: relative POSIX path, executable bit, bytes. Refuses symlinks."""
+    """Every file under a skill folder except IGNORED_FILES: relative POSIX path, executable bit, bytes. Refuses symlinks."""
     if not os.path.isdir(path):
         raise CatalogError("not_a_folder", f"{path} is not a folder.")
     files = []
     for dirpath, dirnames, filenames in os.walk(path):
         dirnames.sort()
-        for entry in dirnames + sorted(filenames):
+        for entry in dirnames + sorted(n for n in filenames if n not in IGNORED_FILES):
             full = os.path.join(dirpath, entry)
             rel = os.path.relpath(full, path).replace(os.sep, "/")
             if os.path.islink(full):
@@ -98,6 +98,25 @@ def _installed_digest(folder) -> str | None:
         return None
 
 
+def classify_installed(cfg: Config, name: str) -> dict:
+    """Compare <skills_dir>/<name>/ with the skill's published versions. Reads only; writes nothing.
+
+    Returns {"state", "latest"} plus, for "matches", the matching "versions" (ascending) and their "digest".
+    state: "not_installed" | "matches" | "modified" (no published version matches, or a symlink is involved).
+    Raises CatalogError("skill_not_found") when the catalog has no skill by that name.
+    """
+    published = history(cfg, name)
+    latest = max(v["version"] for v in published)
+    folder = os.path.join(cfg.skills_dir, name)
+    if not os.path.lexists(folder):
+        return {"state": "not_installed", "latest": latest}
+    digest = None if os.path.islink(folder) else _installed_digest(folder)
+    versions = sorted(v["version"] for v in published if v["digest"] == digest)
+    if not versions:
+        return {"state": "modified", "latest": latest}
+    return {"state": "matches", "latest": latest, "versions": versions, "digest": digest}
+
+
 def _write_verified(staging: str, package: dict) -> None:
     """Write every file into staging and check it against the package. Raises on any mismatch."""
     entries = []
@@ -134,14 +153,14 @@ def install(cfg: Config, package: dict, force: bool = False) -> dict:
             _write_verified(staging, package)
         except (KeyError, TypeError, ValueError) as e:
             raise CatalogError("verification_failed", f"The downloaded skill is malformed ({e}). Nothing was installed.")
-        if not os.path.lexists(dest):
+        installed = classify_installed(cfg, name)
+        if installed["state"] == "not_installed":
             os.rename(staging, dest)
             status = "installed"
         else:
-            installed = _installed_digest(dest)
-            if installed == package["digest"]:
+            if installed.get("digest") == package["digest"]:
                 status = "up_to_date"
-            elif force or installed in {v["digest"] for v in history(cfg, name)}:
+            elif force or installed["state"] == "matches":
                 aside = os.path.join(cfg.skills_dir, f".old-{name}-{secrets.token_hex(4)}")
                 os.rename(dest, aside)
                 try:

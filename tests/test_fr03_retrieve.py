@@ -88,3 +88,112 @@ def test_unreachable_catalog_is_explained(tmp_path):
     with pytest.raises(CatalogError) as err:
         client.discover(cfg, "anything")
     assert err.value.message == "Cannot reach the catalog at http://127.0.0.1:9. Is `catalog serve` running?"
+
+
+# The install rule: never destroy something the catalog can't give back.
+
+
+def test_rule_1_absent_folder_is_installed(cfg, make_skill):
+    folder = make_skill()
+    client.publish(cfg, folder)
+    assert client.classify_installed(cfg, "demo-skill") == {"state": "not_installed", "latest": 1}
+    assert client.retrieve(cfg, "demo-skill")["status"] == "installed"
+    assert snapshot(os.path.join(cfg.skills_dir, "demo-skill")) == snapshot(folder)
+    assert os.listdir(cfg.skills_dir) == ["demo-skill"]
+
+
+def test_rule_2_same_digest_changes_nothing(cfg, make_skill):
+    client.publish(cfg, make_skill())
+    client.retrieve(cfg, "demo-skill")
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    before, inode = snapshot(installed), os.stat(installed).st_ino
+    assert client.retrieve(cfg, "demo-skill")["status"] == "up_to_date"
+    assert snapshot(installed) == before
+    assert os.stat(installed).st_ino == inode  # not swapped for an identical copy
+    assert os.listdir(cfg.skills_dir) == ["demo-skill"]
+
+
+def test_rule_3_other_published_version_is_replaced(cfg, make_skill):
+    client.publish(cfg, make_skill(body="One.\n"))
+    v1 = snapshot(make_skill(body="One.\n"))
+    v2_folder = make_skill(body="Two.\n", extra_files={"two.md": "2"})
+    client.publish(cfg, v2_folder)
+    client.retrieve(cfg, "demo-skill", version=1)
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    assert snapshot(installed) == v1
+    assert client.classify_installed(cfg, "demo-skill")["versions"] == [1]
+    assert client.retrieve(cfg, "demo-skill")["status"] == "updated"
+    assert snapshot(installed) == snapshot(v2_folder)
+    assert os.listdir(cfg.skills_dir) == ["demo-skill"]  # no staging or aside folder left
+
+
+def _install_then_assert_refused(cfg, installed):
+    before = snapshot(installed)
+    assert client.classify_installed(cfg, "demo-skill") == {"state": "modified", "latest": 1}
+    with pytest.raises(CatalogError) as err:
+        client.retrieve(cfg, "demo-skill")
+    assert err.value.code == "local_changes"
+    assert snapshot(installed) == before
+    assert os.listdir(cfg.skills_dir) == ["demo-skill"]
+
+
+def test_rule_4_local_edits_are_refused_and_untouched(cfg, make_skill):
+    client.publish(cfg, make_skill(extra_files={"notes.md": "published"}))
+    client.retrieve(cfg, "demo-skill")
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    with open(os.path.join(installed, "mine.md"), "w") as f:
+        f.write("an added file counts too\n")
+    _install_then_assert_refused(cfg, installed)
+
+
+def test_executable_bit_alone_counts_as_modified(cfg, make_skill):
+    client.publish(cfg, make_skill(extra_files={"run.sh": "echo hi\n"}))
+    client.retrieve(cfg, "demo-skill")
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    os.chmod(os.path.join(installed, "run.sh"), 0o755)
+    _install_then_assert_refused(cfg, installed)
+
+
+def test_symlink_inside_folder_counts_as_modified(cfg, make_skill):
+    client.publish(cfg, make_skill())
+    client.retrieve(cfg, "demo-skill")
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    os.symlink("SKILL.md", os.path.join(installed, "link.md"))
+    with pytest.raises(CatalogError) as err:
+        client.retrieve(cfg, "demo-skill")
+    assert err.value.code == "local_changes"
+    assert os.path.islink(os.path.join(installed, "link.md"))
+
+
+def test_failed_swap_leaves_original_in_place(cfg, make_skill, monkeypatch):
+    client.publish(cfg, make_skill(body="One.\n"))
+    client.retrieve(cfg, "demo-skill")
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    before = snapshot(installed)
+    client.publish(cfg, make_skill(body="Two.\n"))
+
+    real_rename = os.rename
+
+    def failing_rename(src, dst):
+        if os.path.basename(src).startswith(".staging-"):
+            raise OSError("simulated failure moving the new version in")
+        real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", failing_rename)
+    with pytest.raises(OSError):
+        client.retrieve(cfg, "demo-skill")
+    monkeypatch.undo()
+    assert snapshot(installed) == before
+    assert os.listdir(cfg.skills_dir) == ["demo-skill"]
+
+
+def test_finder_metadata_is_not_a_local_edit(cfg, make_skill):
+    client.publish(cfg, make_skill(extra_files={"notes/a.md": "a"}))
+    client.retrieve(cfg, "demo-skill")
+    installed = os.path.join(cfg.skills_dir, "demo-skill")
+    for where in ("", "notes"):
+        with open(os.path.join(installed, where, ".DS_Store"), "wb") as f:
+            f.write(b"\x00\x00\x00\x01Bud1")
+    assert client.classify_installed(cfg, "demo-skill")["state"] == "matches"
+    assert client.retrieve(cfg, "demo-skill")["status"] == "up_to_date"
+    assert os.path.exists(os.path.join(installed, "notes", ".DS_Store"))  # up to date means untouched

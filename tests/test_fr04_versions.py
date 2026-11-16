@@ -20,6 +20,20 @@ def test_identical_republish_still_creates_a_version(cfg):
     receipt = client.retrieve(cfg, "release-note-draft")
     assert receipt["status"] == "up_to_date"
     assert receipt["version"] == 2
+    assert client.classify_installed(cfg, "release-note-draft")["versions"] == [1, 2]
+    assert client.retrieve(cfg, "release-note-draft", version=1)["status"] == "up_to_date"
+
+
+def test_identical_versions_installed_as_v2_then_v1_requested(cfg):
+    client.publish(cfg, EXAMPLE)
+    client.publish(cfg, EXAMPLE)
+    client.retrieve(cfg, "release-note-draft", version=2)
+    installed = os.path.join(cfg.skills_dir, "release-note-draft")
+    inode = os.stat(installed).st_ino
+    receipt = client.retrieve(cfg, "release-note-draft", version=1)
+    assert (receipt["status"], receipt["version"]) == ("up_to_date", 1)
+    assert os.stat(installed).st_ino == inode
+    assert snapshot(installed) == snapshot(EXAMPLE)
 
 
 def test_latest_by_default_and_v1_still_retrievable(cfg, make_skill):
@@ -51,13 +65,15 @@ def test_v1_to_v2_to_v1_with_a_file_removed_in_v2(cfg, make_skill):
     client.publish(cfg, folder)
     installed = os.path.join(cfg.skills_dir, "demo-skill")
 
-    client.retrieve(cfg, "demo-skill", version=1)
-    assert set(snapshot(installed)) == {"SKILL.md", "notes/extra.md"}
-    client.retrieve(cfg, "demo-skill")
+    assert client.retrieve(cfg, "demo-skill", version=1)["status"] == "installed"
+    v1 = snapshot(installed)
+    assert set(v1) == {"SKILL.md", "notes/extra.md"}
+    assert client.retrieve(cfg, "demo-skill")["status"] == "updated"
     assert set(snapshot(installed)) == {"SKILL.md"}
+    assert not os.path.exists(os.path.join(installed, "notes"))  # removed file's folder is gone too
     assert client.history(cfg, "demo-skill")[0]["changes"]["removed"] == ["notes/extra.md"]
-    client.retrieve(cfg, "demo-skill", version=1)
-    assert set(snapshot(installed)) == {"SKILL.md", "notes/extra.md"}
+    assert client.retrieve(cfg, "demo-skill", version=1)["status"] == "updated"
+    assert snapshot(installed) == v1
 
 
 def test_malformed_update_leaves_existing_versions_untouched(cfg, db_path, make_skill):
@@ -78,3 +94,34 @@ def test_missing_version_is_explained(cfg):
         client.retrieve(cfg, "release-note-draft", version=7)
     assert err.value.code == "version_not_found"
     assert err.value.message == "Skill 'release-note-draft' has no version 7. Latest is 1."
+
+
+def test_status_reports_each_state(cfg, make_skill, capsys):
+    from argparse import Namespace
+
+    from skills_catalog.cli import _run, status_line
+
+    client.publish(cfg, make_skill(body="One.\n"))
+    assert status_line(cfg, "demo-skill") == "not installed"
+    client.retrieve(cfg, "demo-skill")
+    assert status_line(cfg, "demo-skill") == "current (matches v1, the latest)"
+    client.publish(cfg, make_skill(body="Two.\n"))
+    client.publish(cfg, make_skill(body="One.\n"))  # v3 has v1's content again
+    assert status_line(cfg, "demo-skill") == "current (matches v3, the latest)"
+    client.retrieve(cfg, "demo-skill", version=2)
+    client.publish(cfg, make_skill(body="Four.\n"))
+    assert status_line(cfg, "demo-skill") == "behind (matches v2; latest is v4)"
+    with open(os.path.join(cfg.skills_dir, "demo-skill", "SKILL.md"), "a") as f:
+        f.write("local edit\n")
+    assert status_line(cfg, "demo-skill") == "locally modified (matches no published version)"
+    os.makedirs(os.path.join(cfg.skills_dir, "hand-made"))
+    assert status_line(cfg, "hand-made") == "not in the catalog"
+
+    before = {d: snapshot(os.path.join(cfg.skills_dir, d)) for d in os.listdir(cfg.skills_dir)}
+    capsys.readouterr()
+    _run(Namespace(command="status", name=None), cfg)
+    assert capsys.readouterr().out.splitlines() == [
+        "demo-skill  locally modified (matches no published version)",
+        "hand-made   not in the catalog",
+    ]
+    assert {d: snapshot(os.path.join(cfg.skills_dir, d)) for d in os.listdir(cfg.skills_dir)} == before  # read-only

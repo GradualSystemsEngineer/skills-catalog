@@ -64,3 +64,23 @@ def test_symlink_is_refused_before_sending(cfg, make_skill, db_path):
         client.publish(cfg, folder)
     assert err.value.code == "symlink"
     assert row_counts(db_path)["versions"] == 0
+
+
+def test_finder_metadata_is_never_published(cfg, make_skill):
+    import base64
+
+    import httpx
+
+    clean = client.publish(cfg, make_skill(body="Same.\n"))
+    cluttered = client.publish(cfg, make_skill(body="Same.\n", extra_files={".DS_Store": b"\x00Bud1", "sub/.DS_Store": b"\x00"}))
+    assert cluttered["digest"] == clean["digest"]
+    assert [f["path"] for f in client.fetch(cfg, "demo-skill")["files"]] == ["SKILL.md"]
+
+    # A client that sends one anyway is refused, so no published version can disagree with an installed copy.
+    raw = {"author": "x", "files": [
+        {"path": p, "executable": False, "content_b64": base64.b64encode(d).decode()}
+        for p, d in (("SKILL.md", b"---\nname: other-skill\ndescription: d\n---\nbody\n"), (".DS_Store", b"\x00"))
+    ]}
+    r = httpx.post(cfg.url + "/skills", json=raw)
+    assert r.status_code == 422
+    assert [p["code"] for p in r.json()["problems"]] == ["path_invalid"]

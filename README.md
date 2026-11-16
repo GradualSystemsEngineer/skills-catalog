@@ -88,6 +88,8 @@ The exceptions the PRD names:
 
 The same verbs work from the command line, for people and scripts: `uv run catalog discover release notes`, `uv run catalog retrieve <name> [--version N] [--force]`, `uv run catalog history <name>`. `retrieve` writes to `CATALOG_SKILLS_DIR` (default `./.claude/skills`).
 
+`uv run catalog status [name]` is read-only: it says whether each installed skill is current, behind, locally modified, or not in the catalog.
+
 To reset the demo, stop the service (Ctrl-C), then from the repo root:
 
 ```bash
@@ -163,6 +165,7 @@ Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session list
 
 - Author is self-declared (your login name, or `--author`), so history shows attribution, not proof.
 - Symlinks are rejected and empty folders are not preserved.
+- `.DS_Store` files are ignored: never published, and never counted as a local edit to an installed skill. No other file is ignored.
 - Publish accepts a folder whose name differs from the skill's `name`; retrieve always writes `<name>/`, so what a developer receives conforms to the format.
 - The service listens on localhost. "Shared" is shown by two developer folders on one machine; two real machines would need the service's bind address changed as well as `CATALOG_URL`.
 - Limits per version: 512 files and 16 MiB.
@@ -175,7 +178,7 @@ Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session list
 
 ## What I would build next (Phase 2, the answer to Q1)
 
-1. **Safe updates and drift visibility.** Tell a developer whether an installed skill is current, behind, or locally edited, and update only on request. This needs a small record outside the skill folder (source, installed version, digest): a hash lookup alone can't tell, because two versions can hold identical content and an edited copy matches none.
+1. **Safe updates and drift visibility.** Tell a developer whether an installed skill is current, behind, or locally edited, and update only on request. This needs a small record outside the skill folder (source, installed version, digest): a hash lookup alone can't tell, because two versions can hold identical content and an edited copy matches none. `catalog status` already does the read-only hash comparison; the installation record, which would say which of several identical versions was installed, does not exist yet.
 2. **Ownership.** With no authentication, anyone can publish the next version of anyone's skill. Fine for a small trusted group; the first correctness problem once sharing widens.
 3. **Discovery feedback.** Log searches that return nothing, since they show which skills the team is missing, and grow the paraphrase test into a small evaluation. Add embeddings only if measured misses justify them.
 4. **Native delivery through MCP.** The Skills extension ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension), status Final; listed as Beta on the [extensions overview](https://modelcontextprotocol.io/extensions/overview)) lets a server offer skills to an assistant directly, described by per-file SHA-256 hashes, which this catalog already stores. It could replace the explicit install step where assistants support it. It ranks last because that support is still arriving, and the assistant still caches files locally, so it reduces drift without ending it.

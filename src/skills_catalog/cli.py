@@ -1,6 +1,7 @@
 """Human face: the `catalog` command. The only module that prints."""
 
 import argparse
+import os
 import sys
 
 from skills_catalog import client
@@ -9,6 +10,22 @@ from skills_catalog.client import CatalogError, Config
 
 def _changes(c: dict) -> str:
     return " ".join([f"+{p}" for p in c["added"]] + [f"~{p}" for p in c["modified"]] + [f"-{p}" for p in c["removed"]])
+
+
+def status_line(cfg: Config, name: str) -> str:
+    """One installed skill's state, read-only. Several matching versions report the highest."""
+    try:
+        c = client.classify_installed(cfg, name)
+    except CatalogError as e:
+        if e.code != "skill_not_found":
+            raise
+        return "not in the catalog"
+    if c["state"] == "not_installed":
+        return "not installed"
+    if c["state"] == "modified":
+        return "locally modified (matches no published version)"
+    n = c["versions"][-1]
+    return f"current (matches v{n}, the latest)" if n == c["latest"] else f"behind (matches v{n}; latest is v{c['latest']})"
 
 
 def _run(args, cfg: Config) -> None:
@@ -32,6 +49,15 @@ def _run(args, cfg: Config) -> None:
     elif args.command == "history":
         for v in client.history(cfg, args.name):
             print(f"v{v['version']:<3} {v['published_at']}  {v['author'] or '-':<12} {v['digest'][:19]}  {_changes(v['changes'])}")
+    elif args.command == "status":
+        if args.name:
+            print(status_line(cfg, args.name))
+            return
+        d = cfg.skills_dir
+        names = sorted(n for n in os.listdir(d) if not n.startswith(".") and os.path.isdir(os.path.join(d, n))) if os.path.isdir(d) else []
+        width = max(map(len, names), default=0)
+        for n in names:
+            print(f"{n:<{width}}  {status_line(cfg, n)}")
 
 
 def main() -> None:
@@ -52,6 +78,8 @@ def main() -> None:
     p.add_argument("--force", action="store_true", help="replace an installed copy that has local edits")
     p = sub.add_parser("history", help="list every version of a skill")
     p.add_argument("name")
+    p = sub.add_parser("status", help="compare installed skills with the catalog (read-only)")
+    p.add_argument("name", nargs="?", help="defaults to every folder in CATALOG_SKILLS_DIR")
     args = parser.parse_args()
 
     if args.command == "serve":
