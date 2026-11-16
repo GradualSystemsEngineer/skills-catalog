@@ -1,6 +1,7 @@
 """Assistant-mediated access NFR: the three MCP tools, in memory, plus the real stdio server as a subprocess."""
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -34,7 +35,7 @@ async def test_exactly_three_tools_are_offered():
     assert all(t.description for t in tools)
 
 
-async def test_discover_returns_ranked_matches(assistant_env):
+async def test_discover_returns_matches_with_summary_fields(assistant_env):  # ranking is tested in test_fr02
     result = await call("discover_skills", {"query": "release notes changelog"})
     assert not result.is_error
     match = result.structured_content["matches"][0]
@@ -60,10 +61,19 @@ async def test_retrieve_installs_into_configured_folder_and_returns_receipt(assi
     assert snapshot(receipt["location"]) == snapshot(EXAMPLE)
 
 
-async def test_retrieve_earlier_version(assistant_env):
-    client.publish(assistant_env, EXAMPLE)
+async def test_retrieve_earlier_version(assistant_env, tmp_path):
+    edited = tmp_path / "edited" / "release-note-draft"
+    shutil.copytree(EXAMPLE, edited)
+    with open(edited / "SKILL.md", "a") as f:
+        f.write("6. Keep the whole note under 200 words.\n")
+    client.publish(assistant_env, edited)
+    assert (await call("retrieve_skill", {"name": "release-note-draft"})).structured_content["version"] == 2
+
     result = await call("retrieve_skill", {"name": "release-note-draft", "version": 1})
+    assert not result.is_error
     assert result.structured_content["version"] == 1
+    assert result.structured_content["status"] == "updated"
+    assert snapshot(result.structured_content["location"]) == snapshot(EXAMPLE)
 
 
 async def test_retrieve_unknown_skill_is_an_error_the_model_can_read(assistant_env):

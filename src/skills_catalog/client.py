@@ -11,7 +11,14 @@ from dataclasses import dataclass
 
 import httpx
 
-from skills_catalog.domain import IGNORED_FILES, NAME_RE, sha256_hex, validate_path, version_digest
+from skills_catalog.domain import (
+    IGNORED_FILES,
+    path_conflicts,
+    sha256_hex,
+    valid_name,
+    validate_path,
+    version_digest,
+)
 
 
 class CatalogError(Exception):
@@ -38,33 +45,50 @@ def _request(cfg: Config, method: str, path: str, **kwargs) -> dict:
         r = httpx.request(method, cfg.url.rstrip("/") + path, timeout=30, **kwargs)
     except (httpx.ConnectError, httpx.TimeoutException):
         raise CatalogError("unreachable", f"Cannot reach the catalog at {cfg.url}. Is `catalog serve` running?")
+    except httpx.RequestError as e:
+        raise CatalogError("unreachable", f"The connection to the catalog at {cfg.url} failed ({type(e).__name__}). Try again.")
     try:
         body = r.json()
     except ValueError:
-        body = {}
+        body = None
     if r.status_code >= 400:
+        body = body if isinstance(body, dict) else {}
         if body.get("error") == "invalid_skill":
             raise CatalogError("invalid_skill", "The skill was rejected; nothing was stored.", body.get("problems"))
         raise CatalogError(body.get("error", "http_error"), body.get("message", f"Catalog returned HTTP {r.status_code}."))
+    if not isinstance(body, dict):
+        raise CatalogError("bad_response", f"The catalog at {cfg.url} sent a response this client cannot read.")
     return body
 
 
+def _raise(error: OSError):
+    raise error
+
+
 def read_skill_dir(path) -> list[dict]:
-    """Every file under a skill folder except IGNORED_FILES: relative POSIX path, executable bit, bytes. Refuses symlinks."""
+    """Every file under a skill folder except IGNORED_FILES: relative POSIX path, executable bit, bytes.
+
+    Refuses symlinks inside the folder, and anything it cannot read: a skipped subfolder would be a silently
+    incomplete publish, or an edited install mistaken for a clean one.
+    """
     if not os.path.isdir(path):
         raise CatalogError("not_a_folder", f"{path} is not a folder.")
     files = []
-    for dirpath, dirnames, filenames in os.walk(path):
-        dirnames.sort()
-        for entry in dirnames + sorted(n for n in filenames if n not in IGNORED_FILES):
-            full = os.path.join(dirpath, entry)
-            rel = os.path.relpath(full, path).replace(os.sep, "/")
-            if os.path.islink(full):
-                raise CatalogError("symlink", f"{rel} is a symbolic link. Symlinks cannot be published; replace it with the file itself.")
-            if entry in filenames:
-                with open(full, "rb") as fh:
-                    data = fh.read()
-                files.append({"path": rel, "executable": bool(os.stat(full).st_mode & 0o111), "data": data})
+    try:
+        for dirpath, dirnames, filenames in os.walk(path, onerror=_raise):
+            dirnames.sort()
+            for entry in dirnames + sorted(n for n in filenames if n not in IGNORED_FILES):
+                full = os.path.join(dirpath, entry)
+                rel = os.path.relpath(full, path).replace(os.sep, "/")
+                if os.path.islink(full):
+                    raise CatalogError("symlink", f"{rel} is a symbolic link. Symlinks cannot be published; replace it with the file itself.")
+                if entry in filenames:
+                    with open(full, "rb") as fh:
+                        data = fh.read()
+                    files.append({"path": rel, "executable": bool(os.stat(full).st_mode & 0o111), "data": data})
+    except OSError as e:
+        where = os.path.relpath(e.filename, path) if e.filename else str(path)
+        raise CatalogError("unreadable", f"{where} in {path} cannot be read ({e.strerror}). Every file in a skill must be readable.")
     return files
 
 
@@ -133,17 +157,43 @@ def _write_verified(staging: str, package: dict) -> None:
         entries.append([f["path"], f["sha256"], bool(f["executable"])])
     if version_digest(entries) != package["digest"]:
         raise CatalogError("verification_failed", "The downloaded skill does not match its published digest. Nothing was installed.")
+    # Each file checked out as it was written; now check what the staging folder actually holds, as a whole.
+    if _installed_digest(staging) != package["digest"]:
+        raise CatalogError("verification_failed", "The files on disk do not match the published skill. Nothing was installed.")
+
+
+def _remove_aside(aside: str, dest: str, version) -> None:
+    """Delete the previous copy, moved aside. If that fails the new version is already in place, so say exactly that."""
+    try:
+        if stat.S_ISDIR(os.lstat(aside).st_mode):
+            os.chmod(aside, 0o700)  # read-only folders would otherwise stop rmtree
+            for dirpath, dirnames, _ in os.walk(aside):
+                for d in dirnames:
+                    if not os.path.islink(os.path.join(dirpath, d)):
+                        os.chmod(os.path.join(dirpath, d), 0o700)
+            shutil.rmtree(aside)
+        else:
+            os.remove(aside)
+    except OSError as e:
+        raise CatalogError(
+            "cleanup_failed",
+            f"Version {version} is installed at {dest}, but the previous copy could not be removed from "
+            f"{aside} ({e.strerror}). Delete it by hand.",
+        )
 
 
 def install(cfg: Config, package: dict, force: bool = False) -> dict:
     """Verify a fetched package in a staging folder, then put it in place as <skills_dir>/<name>/."""
     name = package.get("name")
-    if not isinstance(name, str) or not NAME_RE.match(name):
+    if not valid_name(name):
         raise CatalogError("verification_failed", "The downloaded skill has an invalid name. Nothing was installed.")
     for f in package.get("files", []):
         reason = validate_path(f.get("path"))
         if reason:
             raise CatalogError("verification_failed", f"{reason} Nothing was installed.")
+    conflicts = path_conflicts([f["path"] for f in package.get("files", [])])
+    if conflicts:
+        raise CatalogError("verification_failed", f"{conflicts[0]} Nothing was installed.")
     os.makedirs(cfg.skills_dir, exist_ok=True)
     dest = os.path.join(cfg.skills_dir, name)
     staging = tempfile.mkdtemp(dir=cfg.skills_dir, prefix=".staging-")
@@ -163,12 +213,19 @@ def install(cfg: Config, package: dict, force: bool = False) -> dict:
             elif force or installed["state"] == "matches":
                 aside = os.path.join(cfg.skills_dir, f".old-{name}-{secrets.token_hex(4)}")
                 os.rename(dest, aside)
+                # The copy was classified clean a moment ago; check that what was moved aside still is.
+                if not force and _installed_digest(aside) != installed["digest"]:
+                    os.rename(aside, dest)
+                    raise CatalogError(
+                        "local_changes",
+                        f"{dest} changed while it was being updated. It was put back untouched; nothing was installed.",
+                    )
                 try:
                     os.rename(staging, dest)
                 except BaseException:
                     os.rename(aside, dest)
                     raise
-                shutil.rmtree(aside) if stat.S_ISDIR(os.lstat(aside).st_mode) else os.remove(aside)
+                _remove_aside(aside, dest, package["version"])
                 status = "updated"
             else:
                 raise CatalogError(

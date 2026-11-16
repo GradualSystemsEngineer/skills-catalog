@@ -125,3 +125,13 @@ def test_status_reports_each_state(cfg, make_skill, capsys):
         "hand-made   not in the catalog",
     ]
     assert {d: snapshot(os.path.join(cfg.skills_dir, d)) for d in os.listdir(cfg.skills_dir)} == before  # read-only
+
+
+@pytest.mark.parametrize("bad", ["nope", "1.5", "-1"])
+def test_version_that_is_not_a_number_gets_its_own_error(cfg, bad):
+    import httpx
+
+    client.publish(cfg, EXAMPLE)
+    r = httpx.get(f"{cfg.url}/skills/release-note-draft/versions/{bad}")
+    assert r.status_code == 422
+    assert r.json() == {"error": "invalid_version", "message": f"Version must be a whole number, not '{bad}'."}

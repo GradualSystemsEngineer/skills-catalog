@@ -63,3 +63,20 @@ def test_terms_removed_in_v2_stop_matching(cfg, make_skill):
     assert names(client.discover(cfg, "zanzibar")) == ["demo-skill"]
     client.publish(cfg, make_skill(body="No longer mentioned.\n"))
     assert client.discover(cfg, "zanzibar")["matches"] == []
+
+
+def test_name_outranks_description_outranks_body(cfg, make_skill):
+    """Each skill mentions 'zebra' once, in a different field; the field weights alone decide the order."""
+    make = lambda name, desc, body: client.publish(cfg, make_skill(name=name, description=desc, body=body))
+    make("body-hit", "Formats tables. Use when tidying data.", "Mention zebra once in a longer body.\n")
+    make("zebra-tool", "Formats tables. Use when tidying data.", "Plain instructions.\n")
+    make("desc-hit", "Formats zebra tables. Use when tidying data.", "Plain instructions.\n")
+    assert names(client.discover(cfg, "zebra")) == ["zebra-tool", "desc-hit", "body-hit"]
+
+
+def test_at_most_ten_matches(cfg, make_skill):
+    for i in range(12):
+        client.publish(cfg, make_skill(name=f"lint-{i}", description="Lints code. Use before review."))
+    result = client.discover(cfg, "lint")
+    assert len(result["matches"]) == 10
+    assert result["catalog_size"] == 12

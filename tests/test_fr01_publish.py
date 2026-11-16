@@ -1,6 +1,7 @@
 """FR-01 / UC-01: publish a skill; a skill missing name, description or body is rejected with an explanation."""
 
 import base64
+import os
 
 import pytest
 from conftest import EXAMPLE, row_counts, snapshot
@@ -84,3 +85,60 @@ def test_finder_metadata_is_never_published(cfg, make_skill):
     r = httpx.post(cfg.url + "/skills", json=raw)
     assert r.status_code == 422
     assert [p["code"] for p in r.json()["problems"]] == ["path_invalid"]
+
+
+def _post_raw(cfg, files):
+    import httpx
+
+    return httpx.post(cfg.url + "/skills", json={"author": "x", "files": [
+        {"path": p, "executable": False, "content_b64": base64.b64encode(d).decode()} for p, d in files
+    ]})
+
+
+GOOD_MANIFEST = b"---\nname: demo-skill\ndescription: d\n---\nbody\n"
+
+
+@pytest.mark.parametrize(
+    "extra, message",
+    [
+        ((("A.txt", b"first"), ("a.txt", b"second")),
+         "a.txt and A.txt differ only in letter case or Unicode form, so they would be the same file."),
+        ((("café.md", b"1"), ("café.md", b"2")),
+         "café.md and café.md differ only in letter case or Unicode form, so they would be the same file."),
+        ((("a", b"x"), ("a/b", b"y")), "a is a file, but a/b needs it to be a folder."),
+    ],
+)
+def test_paths_that_cannot_coexist_on_disk_are_rejected(cfg, db_path, extra, message):
+    r = _post_raw(cfg, (("SKILL.md", GOOD_MANIFEST), *extra))
+    assert r.status_code == 422
+    assert {"code": "path_conflict", "message": message} in r.json()["problems"]
+    assert row_counts(db_path)["versions"] == 0
+
+
+@pytest.mark.parametrize(
+    "front, code",
+    [
+        ('name: "bad\\n"\ndescription: d', "name_invalid"),          # a trailing newline is not part of a valid name
+        ("name: demo-skill\ndescription: 2026-99-99", "frontmatter_invalid"),  # PyYAML raises ValueError here
+        ("name: demo-skill\ndescription: " + "[" * 5000, "frontmatter_invalid"),  # RecursionError
+    ],
+)
+def test_awkward_manifests_get_an_explanation_not_a_server_error(cfg, db_path, front, code):
+    r = _post_raw(cfg, (("SKILL.md", f"---\n{front}\n---\nbody\n".encode()),))
+    assert r.status_code == 422
+    assert code in [p["code"] for p in r.json()["problems"]]
+    assert row_counts(db_path)["versions"] == 0
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read anything")
+def test_unreadable_subfolder_stops_the_publish(cfg, make_skill, db_path):
+    folder = make_skill(extra_files={"secret/mine.md": "x"})
+    os.chmod(folder / "secret", 0)
+    try:
+        with pytest.raises(CatalogError) as err:
+            client.publish(cfg, folder)
+    finally:
+        os.chmod(folder / "secret", 0o755)
+    assert err.value.code == "unreadable"
+    assert err.value.message.startswith("secret in ")
+    assert row_counts(db_path)["versions"] == 0

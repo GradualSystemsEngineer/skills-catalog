@@ -6,13 +6,20 @@ A skill's files are a list of dicts: {"path": str, "executable": bool, "data": b
 import hashlib
 import json
 import re
+import unicodedata
 
 import yaml
 
 MANIFEST = "SKILL.md"
 MAX_FILES = 512
 MAX_BYTES = 16 * 1024 * 1024
-NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+MAX_NAME = 64
+NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+
+def valid_name(name) -> bool:
+    """1 to 64 lowercase letters, digits and single hyphens. The whole string must match: no trailing newline."""
+    return isinstance(name, str) and len(name) <= MAX_NAME and NAME_RE.fullmatch(name) is not None
 
 
 class ManifestError(ValueError):
@@ -37,6 +44,10 @@ def parse_manifest(data: bytes) -> tuple[dict, str]:
         mark = getattr(e, "problem_mark", None)
         where = f": line {mark.line + 2}" if mark else ""
         raise ManifestError(f"SKILL.md frontmatter is not valid YAML{where}.")
+    except RecursionError:
+        raise ManifestError("SKILL.md frontmatter is nested too deeply.")
+    except ValueError as e:  # PyYAML raises plain ValueError for values like an impossible date (2026-99-99)
+        raise ManifestError(f"SKILL.md frontmatter has a value that cannot be read ({e}). Quote it to make it text.")
     if front is None:
         front = {}
     if not isinstance(front, dict):
@@ -61,6 +72,33 @@ def validate_path(path) -> str | None:
     return None
 
 
+def _fold(path: str) -> str:
+    """The form a case-insensitive, Unicode-normalizing filesystem (macOS, Windows) compares names in."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", path).casefold())
+
+
+def path_conflicts(paths: list[str]) -> list[str]:
+    """Why these (individually valid) paths cannot all exist on disk at once, or [] if they can.
+
+    Two paths that differ only in letter case or Unicode form would be one file on macOS. A path that is
+    a file cannot also be a folder holding another path. Exact duplicates are reported elsewhere.
+    """
+    problems = []
+    by_fold = {}
+    for p in paths:
+        other = by_fold.setdefault(_fold(p), p)
+        if other != p:
+            problems.append(f"{p} and {other} differ only in letter case or Unicode form, so they would be the same file.")
+    for p in paths:
+        parts = _fold(p).split("/")
+        for i in range(1, len(parts)):
+            ancestor = by_fold.get("/".join(parts[:i]))
+            if ancestor is not None:
+                problems.append(f"{ancestor} is a file, but {p} needs it to be a folder.")
+                break
+    return problems
+
+
 def _problem(code: str, message: str) -> dict:
     return {"code": code, "message": message}
 
@@ -76,6 +114,8 @@ def validate(files: list[dict]) -> list[dict]:
         elif f["path"] in seen:
             problems.append(_problem("path_duplicate", f"{f['path']} appears more than once."))
         seen.add(f["path"])
+    valid_paths = [p for p in seen if validate_path(p) is None]
+    problems += [_problem("path_conflict", m) for m in path_conflicts(sorted(valid_paths))]
     if len(files) > MAX_FILES:
         problems.append(_problem("too_many_files", f"Skill has {len(files)} files; the limit is {MAX_FILES}."))
     total = sum(len(f["data"]) for f in files)
@@ -95,10 +135,10 @@ def validate(files: list[dict]) -> list[dict]:
     name = front.get("name")
     if name is None or name == "":
         problems.append(_problem("name_missing", "name is missing. Add name: your-skill-name to the frontmatter."))
-    elif not isinstance(name, str) or len(name) > 64 or not NAME_RE.match(name):
+    elif not valid_name(name):
         problems.append(_problem(
             "name_invalid",
-            f"name {name!r} is not valid: use 1 to 64 lowercase letters, digits and single hyphens.",
+            f"name {name!r} is not valid: use 1 to {MAX_NAME} lowercase letters, digits and single hyphens.",
         ))
     desc = front.get("description")
     if not isinstance(desc, str) or not desc.strip():

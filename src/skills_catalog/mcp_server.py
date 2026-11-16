@@ -26,7 +26,7 @@ def discover_skills(query: str) -> dict[str, Any]:
 
 @mcp.tool()
 def retrieve_skill(name: str, version: int | None = None) -> dict[str, Any]:
-    """Download a skill from the shared catalog and install it into this project's skills folder, verified and unchanged. Use when the user asks to get, install, pull or use a catalog skill. Installs the latest version unless `version` is given; pass `version` to get an earlier one. Returns a receipt with the version, digest and location. Safe to call without backing anything up: it replaces an installed copy only when that copy exactly matches a published version, so nothing is lost; a copy with local edits is left untouched and the tool returns an error saying so. Receipt status: 'installed' (new), 'updated' (replaced an unmodified published version), 'up_to_date' (already identical, nothing changed)."""
+    """Download a skill from the shared catalog and install it into this project's skills folder, verified and unchanged. Use when the user asks to get, install, pull or use a catalog skill. Installs the latest version unless `version` is given; pass `version` to get an earlier one. Returns a receipt with the version, digest and location. It replaces an installed copy only when that copy exactly matches a published version, which the catalog can always give back, and checks again just before replacing it; a copy with local edits is left untouched and the tool returns an error saying so. Receipt status: 'installed' (new), 'updated' (replaced an unmodified published version), 'up_to_date' (already identical, nothing changed)."""
     return _call(client.retrieve, name, version)
 
 

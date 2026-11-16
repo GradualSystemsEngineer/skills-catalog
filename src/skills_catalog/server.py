@@ -5,6 +5,7 @@ Routes are plain `def`, so FastAPI runs them in its thread pool; each request op
 
 import base64
 import binascii
+import re
 from contextlib import closing
 from typing import Any
 
@@ -64,7 +65,7 @@ def create_app(db_path) -> FastAPI:
         return closing(store.connect(db_path))
 
     @app.exception_handler(RequestValidationError)
-    def _bad_request(request, exc):
+    def _bad_request(request, exc):  # only the publish body is validated by FastAPI; other routes check their own arguments
         return _request_invalid()
 
     @app.post("/skills", status_code=201)
@@ -104,7 +105,13 @@ def create_app(db_path) -> FastAPI:
         return {"name": name, "versions": entries} if entries else _skill_not_found(name)
 
     @app.get("/skills/{name}/versions/{version}")
-    def one_version(name: str, version: int):
+    def one_version(name: str, version: str):
+        if not re.fullmatch(r"[0-9]{1,9}", version):
+            return JSONResponse(
+                status_code=422,
+                content={"error": "invalid_version", "message": f"Version must be a whole number, not '{version}'."},
+            )
+        version = int(version)
         with db() as conn:
             package = store.get_version(conn, name, version)
             newest = None if package else store.latest_version(conn, name)

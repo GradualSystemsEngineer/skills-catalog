@@ -118,7 +118,7 @@ Configuration is two environment variables: `CATALOG_URL` (default `http://127.0
 
 ### What each test layer proves
 
-`uv run pytest -q` runs the real service over HTTP against a temporary database and skills folder, with no mocks. Each PRD requirement has its own file: `test_fr01_publish.py` to `test_fr04_versions.py`, `test_nfr_consistency.py`, `test_mcp_tools.py`.
+`uv run pytest -q` runs the real service over HTTP against a temporary database and skills folder: real HTTP and SQLite, with fault injection only where a filesystem failure has to be simulated. Each PRD requirement has its own file: `test_fr01_publish.py` to `test_fr04_versions.py`, `test_nfr_consistency.py`, `test_mcp_tools.py`.
 
 - **In-memory tool tests** prove the three tools' behaviour and result shapes.
 - **The subprocess test** proves `catalog mcp` launches and speaks the protocol over stdio.
@@ -139,7 +139,8 @@ The PRD's decision log ends at D3. Continued here:
 | D10 | A version travels as one complete package; the client verifies every file's hash | One request each way. Verification does not need a request per file |
 | D11 | Python for the timebox | See below |
 | D12 | Retrieve replaces a clean installed copy and refuses to overwrite local edits | Never destroy something the catalog cannot give back |
-| D13 | Symlinks are rejected and empty folders are not kept | Declared limits of the package format, stated instead of half-supported |
+| D13 | Symlinks inside a skill are rejected and empty folders are not kept | Declared limits of the package format, stated instead of half-supported. Publishing a path that is itself a symlink to a skill folder follows it, like any other path you name |
+| D14 | Two file paths that differ only in letter case or Unicode form, or a file that another path needs as a folder, are rejected at publish and at install | They cannot both exist on macOS or Windows, so the installed copy would not match its digest |
 
 **The language trade-off (D11).** Python for the timebox. The client is the piece that would live on every developer's machine, so it is the piece where a single self-contained binary (Rust or Go) would be worth weighing if this were distributed for real. The service and the API would not change.
 
@@ -150,6 +151,7 @@ Details the design doc left open, settled while building:
 - `examples/dev2/.mcp.json` sets no `CATALOG_SKILLS_DIR`. Claude Code 2.1.325 starts the stdio server with the project folder as its working directory, so the default `./.claude/skills` lands in the right place. `${CLAUDE_PROJECT_DIR}` was not set for the server, so an `env` entry built on it only ever produced the default.
 - MCP tools are annotated `-> dict[str, Any]`, not `-> dict`. With `mcp` 2.3.0 a bare `dict` produced no output schema and no `structured_content`, only text, although the SDK docs say it should. The in-memory tests caught it.
 - `GET /skills/{name}/versions` returns `{"name": ..., "versions": [...]}` rather than a bare list, so the response names the skill it describes. `POST /skills` also returns `published_at`.
+- `GET /skills/{name}/versions/{version}` with a version that is not a whole number returns 422 `{"error": "invalid_version", "message": ...}`, a fourth error code, rather than the publish-body error.
 - The skills in `tests/skills/` serve both the discovery tests and the demo catalog.
 - Names: `skills-catalog` (repo and package) and `catalog` (command) are working names. TODO(aaron): confirm or rename.
 
@@ -159,12 +161,13 @@ Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session list
 
 **Shipped:** publish (CLI), discover, retrieve and history (CLI and assistant), integer versions with history and file-level changes, verified installs that protect local edits, explicit empty results and plain-language errors for every PRD exception, and a test file per PRD requirement.
 
-**Left out on purpose:** authentication and de-duplication (excluded by the PRD), embeddings, a web UI, remote hosting, drift detection, a `publish_skill` MCP tool (the PRD only requires discover and retrieve through the assistant), and the MCP Skills extension (see next steps).
+**Left out on purpose:** authentication and de-duplication (excluded by the PRD), embeddings, a web UI, remote hosting, an installation record (`catalog status` compares installed copies by hash, but nothing records which version was installed; see next steps), a `publish_skill` MCP tool (the PRD only requires discover and retrieve through the assistant), and the MCP Skills extension (see next steps).
 
 **Known limits:**
 
 - Author is self-declared (your login name, or `--author`), so history shows attribution, not proof.
 - Symlinks are rejected and empty folders are not preserved.
+- Retrieve re-checks an installed copy just before replacing it, but it does not lock the folder. Another program writing into the skill folder during the instant of the swap is not protected against.
 - `.DS_Store` files are ignored: never published, and never counted as a local edit to an installed skill. No other file is ignored.
 - Publish accepts a folder whose name differs from the skill's `name`; retrieve always writes `<name>/`, so what a developer receives conforms to the format.
 - The service listens on localhost. "Shared" is shown by two developer folders on one machine; two real machines would need the service's bind address changed as well as `CATALOG_URL`.
