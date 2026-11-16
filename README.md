@@ -1,12 +1,182 @@
 # Skills Catalog
 
-TODO: full README in M5.
+A shared catalog for AI-assistant skills: one developer publishes a skill folder, and another developer's assistant finds it, installs it verified and unchanged, and can go back to any earlier version. It is a four-hour build of the PRD's core loop (publish, discover, retrieve, version) and nothing else; the design is in [`docs/design.md`](docs/design.md).
 
-## Decisions made during build
+## Run it
 
-- `examples/dev2/.mcp.json` sets no `CATALOG_SKILLS_DIR`. Claude Code 2.1.325 launches the stdio server with the project folder (`examples/dev2`) as its working directory, so the default `./.claude/skills` resolves correctly; `${CLAUDE_PROJECT_DIR}` was not set for the server, so the plan's `env` entry only ever produced the default.
-- `GET /skills/{name}/versions` returns `{"name": ..., "versions": [...]}` rather than a bare list, so the response names the skill it describes.
-- `POST /skills` also returns `published_at` alongside name, version and digest, so the CLI can confirm when.
-- Observed with Claude Code 2.1.325 (`claude -p` in `examples/dev2`): after `retrieve_skill`, the same session listed and could invoke the new skill without a restart, and a new session also listed it. The short-lived `.staging-*` folder never appeared as a skill. Interactive mode to be confirmed in the rehearsal.
-- The test fixtures in `tests/skills/` double as the extra catalog content for the demo, so discovery has something to rank.
-- MCP tools are annotated `-> dict[str, Any]`, not `-> dict`. With `mcp` 2.3.0 a bare `dict` produced no output schema and no `structured_content` (text only), although the SDK docs say it should; found by the in-memory tests.
+You need macOS or Linux, [`uv`](https://docs.astral.sh/uv/), and [Claude Code](https://code.claude.com/) for the assistant part. `uv` installs Python 3.12 for you if you don't have it.
+
+1. Install `uv` (skip if `uv --version` already works):
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Get the code and install the locked dependencies:
+
+   ```bash
+   git clone TODO(aaron)-repo-url skills-catalog
+   ```
+
+   ```bash
+   cd skills-catalog
+   ```
+
+   ```bash
+   uv sync
+   ```
+
+3. Optional: run the tests (about 10 seconds):
+
+   ```bash
+   uv run pytest -q
+   ```
+
+4. Start the catalog service and leave it running. It listens on `127.0.0.1:8321` and creates `catalog.db` in the folder you run it from (here, the repo root):
+
+   ```bash
+   uv run catalog serve
+   ```
+
+5. In a **second terminal**, from the repo root, publish the PRD's example skill as Developer 1 (FR-01):
+
+   ```bash
+   uv run catalog publish examples/dev1/release-note-draft
+   ```
+
+   Then publish four more small skills, so discovery has something to choose between:
+
+   ```bash
+   for d in tests/skills/*; do uv run catalog publish "$d"; done
+   ```
+
+6. Still in the second terminal, become Developer 2 and start Claude Code in their project folder:
+
+   ```bash
+   cd examples/dev2 && claude
+   ```
+
+   Claude Code asks whether to trust the folder, then whether to use the `skills-catalog` MCP server from this project's `.mcp.json`. Approve both. (The server is `uv run catalog mcp`, started by Claude Code over stdio.)
+
+## Try the four PRD examples
+
+Type these into Claude Code in `examples/dev2`:
+
+1. **FR-02, discover:** `is there a skill for writing release notes?`
+   The assistant returns `release-note-draft` with its description.
+2. **FR-03, retrieve:** `get me the release-note-draft skill`
+   The skill is written to `examples/dev2/.claude/skills/release-note-draft/`, identical to `examples/dev1/release-note-draft/`.
+3. **FR-04, version.** In a **third terminal**, from the repo root, edit the skill as Developer 1 and publish again:
+
+   ```bash
+   echo "6. Keep the whole note under 200 words." >> examples/dev1/release-note-draft/SKILL.md
+   ```
+
+   ```bash
+   uv run catalog publish examples/dev1/release-note-draft
+   ```
+
+   Back in Claude Code:
+   - `show me the history of release-note-draft`: both versions, with which files changed.
+   - `get me the release-note-draft skill`: updates the installed copy to version 2.
+   - `get me version 1 of release-note-draft`: puts version 1 back.
+
+The exceptions the PRD names:
+
+- `is there a skill for tuning kubernetes autoscaling?`: the assistant says plainly that nothing matches.
+- `get me the terraform-module-lint skill`: the assistant relays "No skill named 'terraform-module-lint' in the catalog."
+
+The same verbs work from the command line, for people and scripts: `uv run catalog discover release notes`, `uv run catalog retrieve <name> [--version N] [--force]`, `uv run catalog history <name>`. `retrieve` writes to `CATALOG_SKILLS_DIR` (default `./.claude/skills`).
+
+To reset the demo, stop the service (Ctrl-C), then from the repo root:
+
+```bash
+git checkout examples/dev1 && rm -rf catalog.db examples/dev2/.claude/skills/*/
+```
+
+## How it works
+
+```
+ Developer 1                    shared                         Developer 2
+ ───────────                    ──────                         ───────────
+ catalog publish ──HTTP──▶  catalog service  ◀──HTTP── local MCP server ◀─stdio─ Claude Code
+   (CLI)                    (FastAPI + one                (catalog mcp: three tools)
+                             SQLite file)                          │
+                                                                   ▼
+                                                   .claude/skills/<name>/  (verified files)
+```
+
+- **Catalog service** (`server.py`, `store.py`): five JSON routes over one SQLite file. Publishing validates the skill in memory, then one transaction assigns the next version number, inserts the version and its files, and replaces the skill's row in the full-text index. Versions and files are insert-only.
+- **Client** (`client.py`): the only code that touches a developer's disk. To retrieve, it downloads the whole version in one request, writes it into a hidden staging folder, checks every file's SHA-256 and size and the version digest, and only then moves it into place. It never overwrites a copy it can't give back: an installed folder that matches no published version is left alone unless you pass `--force` on the CLI.
+- **Two faces on the client:** a CLI (`cli.py`) and an MCP server (`mcp_server.py`) with three tools: `discover_skills`, `retrieve_skill`, `skill_history`. The model chooses what to fetch; it never handles file contents or chooses where files go.
+- **Skills** are folders in the open [Agent Skills format](https://agentskills.io/specification.md): a `SKILL.md` with `name` and `description` in YAML frontmatter, an instruction body, and any supporting files.
+- **Discovery** is SQLite FTS5 with a Porter stemmer, ranking name over description over body. The assistant turns the user's request into keywords and judges the results; there are no embeddings. A paraphrase test guards recall.
+
+Configuration is two environment variables: `CATALOG_URL` (default `http://127.0.0.1:8321`) and `CATALOG_SKILLS_DIR` (default `./.claude/skills`, relative to where the client runs; Claude Code starts the MCP server in the project folder).
+
+### What each test layer proves
+
+`uv run pytest -q` runs the real service over HTTP against a temporary database and skills folder, with no mocks. Each PRD requirement has its own file: `test_fr01_publish.py` to `test_fr04_versions.py`, `test_nfr_consistency.py`, `test_mcp_tools.py`.
+
+- **In-memory tool tests** prove the three tools' behaviour and result shapes.
+- **The subprocess test** proves `catalog mcp` launches and speaks the protocol over stdio.
+- **The walk-through above** with a real assistant proves that natural-language requests reach the right tools. No automated test stands in for it.
+
+## Decisions
+
+The PRD's decision log ends at D3. Continued here:
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| D4 | The assistant reaches the catalog through a local MCP server that calls a shared HTTP service | Something local has to write the retrieved files. A small client that verifies what it writes is more dependable than asking the model to do it |
+| D5 | Skills use the open Agent Skills format | A retrieved skill lands where assistants already look; no format to invent or explain |
+| D6 | Versions are integers assigned by the service | The PRD says publishing creates the version. Authors choose nothing |
+| D7 | Every accepted publish creates a version, identical content included | FR-04 says so. A version records a publication |
+| D8 | Discovery is full-text search with no embeddings | The assistant supplies the language understanding. Nothing to download, no API key. A paraphrase check guards recall |
+| D9 | One SQLite file holds everything | Publish is one transaction, so nothing partial is stored; zero setup |
+| D10 | A version travels as one complete package; the client verifies every file's hash | One request each way. Verification does not need a request per file |
+| D11 | Python for the timebox | See below |
+| D12 | Retrieve replaces a clean installed copy and refuses to overwrite local edits | Never destroy something the catalog cannot give back |
+| D13 | Symlinks are rejected and empty folders are not kept | Declared limits of the package format, stated instead of half-supported |
+
+**The language trade-off (D11).** Python for the timebox. The client is the piece that would live on every developer's machine, so it is the piece where a single self-contained binary (Rust or Go) would be worth weighing if this were distributed for real. The service and the API would not change.
+
+### Decisions made during build
+
+Details the design doc left open, settled while building:
+
+- `examples/dev2/.mcp.json` sets no `CATALOG_SKILLS_DIR`. Claude Code 2.1.325 starts the stdio server with the project folder as its working directory, so the default `./.claude/skills` lands in the right place. `${CLAUDE_PROJECT_DIR}` was not set for the server, so an `env` entry built on it only ever produced the default.
+- MCP tools are annotated `-> dict[str, Any]`, not `-> dict`. With `mcp` 2.3.0 a bare `dict` produced no output schema and no `structured_content`, only text, although the SDK docs say it should. The in-memory tests caught it.
+- `GET /skills/{name}/versions` returns `{"name": ..., "versions": [...]}` rather than a bare list, so the response names the skill it describes. `POST /skills` also returns `published_at`.
+- The skills in `tests/skills/` serve both the discovery tests and the demo catalog.
+
+Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session listed and could invoke the new skill without a restart, and a new session listed it too. The hidden `.staging-*` folder never appeared as a skill.
+
+## What shipped and what was left out
+
+**Shipped:** publish (CLI), discover, retrieve and history (CLI and assistant), integer versions with history and file-level changes, verified installs that protect local edits, explicit empty results and plain-language errors for every PRD exception, and a test file per PRD requirement.
+
+**Left out on purpose:** authentication and de-duplication (excluded by the PRD), embeddings, a web UI, remote hosting, drift detection, a `publish_skill` MCP tool (the PRD only requires discover and retrieve through the assistant), and the MCP Skills extension (see next steps).
+
+**Known limits:**
+
+- Author is self-declared (your login name, or `--author`), so history shows attribution, not proof.
+- Symlinks are rejected and empty folders are not preserved.
+- Publish accepts a folder whose name differs from the skill's `name`; retrieve always writes `<name>/`, so what a developer receives conforms to the format.
+- The service listens on localhost. "Shared" is shown by two developer folders on one machine; two real machines would need the service's bind address changed as well as `CATALOG_URL`.
+- Limits per version: 512 files and 16 MiB.
+
+**Versions tested:** Claude Code 2.1.325, MCP Python SDK (`mcp`) 2.3.0, Python 3.12.16, uv 0.13.8, FastAPI 0.163.1, uvicorn 0.54.0, macOS. Exact versions of everything are in `uv.lock`. No claim is made beyond these.
+
+**How the four hours went:** TODO(aaron)
+
+**How AI was used** (what I directed, what I verified by hand, what I changed or rejected): TODO(aaron)
+
+## What I would build next (Phase 2, the answer to Q1)
+
+1. **Safe updates and drift visibility.** Tell a developer whether an installed skill is current, behind, or locally edited, and update only on request. This needs a small record outside the skill folder (source, installed version, digest): a hash lookup alone can't tell, because two versions can hold identical content and an edited copy matches none.
+2. **Ownership.** With no authentication, anyone can publish the next version of anyone's skill. Fine for a small trusted group; the first correctness problem once sharing widens.
+3. **Discovery feedback.** Log searches that return nothing, since they show which skills the team is missing, and grow the paraphrase test into a small evaluation. Add embeddings only if measured misses justify them.
+4. **Native delivery through MCP.** The Skills extension ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension), status Final; listed as Beta on the [extensions overview](https://modelcontextprotocol.io/extensions/overview)) lets a server offer skills to an assistant directly, described by per-file SHA-256 hashes, which this catalog already stores. It could replace the explicit install step where assistants support it. It ranks last because that support is still arriving, and the assistant still caches files locally, so it reduces drift without ending it.
+
+If the catalog stays within one small team with clear ownership habits, items 2 and 3 swap.
