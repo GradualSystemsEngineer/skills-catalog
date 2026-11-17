@@ -15,7 +15,7 @@ You need macOS or Linux, [`uv`](https://docs.astral.sh/uv/), and [Claude Code](h
 2. Get the code and install the locked dependencies:
 
    ```bash
-   git clone TODO(aaron)-repo-url skills-catalog
+   git clone https://github.com/GradualSystemsEngineer/skills-catalog.git skills-catalog
    ```
 
    ```bash
@@ -185,7 +185,7 @@ Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session list
 - **The demo, in a real assistant session.** In `examples/dev2` I ran the PRD’s example prompts, plus two phrasings of my own that aren’t in the tests: “anything that would help me write a changelog?” and “I need to summarize what shipped this sprint. Do we have something for that?” Both found `release-note-draft`. The retrieved folder matched the original exactly (`diff -r`), with the same file permissions.
 - **Failure paths.** A publish with no description was rejected with an explanation, and the history was unchanged. Asking for a skill that doesn't exist, and searching for something that matches nothing, both got clear answers. 
 - **Updates and local edits.** I went from v1 to v2 and back to v1, then edited the installed copy and asked for the latest. Retrieve refused and left my edit in place, and `catalog status` reported the copy as locally modified. 
-- **The code.** I read all of it, about 300 lines, spending the most time on the publish transaction, the digest function and the install swap. 
+- **The code.** I read all of it, about 840 lines in `src/`, spending the most time on the publish transaction, the digest function and the install swap. 
 - **The repo.** No database files, secrets or generated files are committed, `uv.lock` is checked in, and the tests pass from a clean checkout. 
 
 **What I changed or rejected.** I didn't accept the design review wholesale. I took most of it: every publish now creates a new version, storage and transfer are simpler, the digest format is unambiguous, and the assistant gets tested in the first 20 minutes of the build. 
