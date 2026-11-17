@@ -128,19 +128,19 @@ Configuration is two environment variables: `CATALOG_URL` (default `http://127.0
 
 The PRD's decision log ends at D3. Continued here:
 
-| # | Decision | Rationale |
-| --- | --- | --- |
-| D4 | The assistant reaches the catalog through a local MCP server that calls a shared HTTP service | Something local has to write the retrieved files. A small client that verifies what it writes is more dependable than asking the model to do it |
-| D5 | Skills use the open Agent Skills format | A retrieved skill lands where assistants already look; no format to invent or explain |
-| D6 | Versions are integers assigned by the service | The PRD says publishing creates the version. Authors choose nothing |
-| D7 | Every accepted publish creates a version, identical content included | FR-04 says so. A version records a publication |
-| D8 | Discovery is full-text search with no embeddings | The assistant supplies the language understanding. Nothing to download, no API key. A paraphrase check guards recall |
-| D9 | One SQLite file holds everything | Publish is one transaction, so nothing partial is stored; zero setup |
-| D10 | A version travels as one complete package; the client verifies every file's hash | One request each way. Verification does not need a request per file |
-| D11 | Python for the timebox | See below |
-| D12 | Retrieve replaces a clean installed copy and refuses to overwrite local edits | Never destroy something the catalog cannot give back |
-| D13 | Symlinks inside a skill are rejected and empty folders are not kept | Declared limits of the package format, stated instead of half-supported. Publishing a path that is itself a symlink to a skill folder follows it, like any other path you name |
-| D14 | Two file paths that differ only in letter case or Unicode form, or a file that another path needs as a folder, are rejected at publish and at install | They cannot both exist on macOS or Windows, so the installed copy would not match its digest |
+| #   | Decision                                                                                                                                              | Rationale                                                                                                                                                                      |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D4  | The assistant reaches the catalog through a local MCP server that calls a shared HTTP service                                                         | Something local has to write the retrieved files. A small client that verifies what it writes is more dependable than asking the model to do it                                |
+| D5  | Skills use the open Agent Skills format                                                                                                               | A retrieved skill lands where assistants already look; no format to invent or explain                                                                                          |
+| D6  | Versions are integers assigned by the service                                                                                                         | The PRD says publishing creates the version. Authors choose nothing                                                                                                            |
+| D7  | Every accepted publish creates a version, identical content included                                                                                  | FR-04 says so. A version records a publication                                                                                                                                 |
+| D8  | Discovery is full-text search with no embeddings                                                                                                      | The assistant supplies the language understanding. Nothing to download, no API key. A paraphrase check guards recall                                                           |
+| D9  | One SQLite file holds everything                                                                                                                      | Publish is one transaction, so nothing partial is stored; zero setup                                                                                                           |
+| D10 | A version travels as one complete package; the client verifies every file's hash                                                                      | One request each way. Verification does not need a request per file                                                                                                            |
+| D11 | Python for the timebox                                                                                                                                | See below                                                                                                                                                                      |
+| D12 | Retrieve replaces a clean installed copy and refuses to overwrite local edits                                                                         | Never destroy something the catalog cannot give back                                                                                                                           |
+| D13 | Symlinks inside a skill are rejected and empty folders are not kept                                                                                   | Declared limits of the package format, stated instead of half-supported. Publishing a path that is itself a symlink to a skill folder follows it, like any other path you name |
+| D14 | Two file paths that differ only in letter case or Unicode form, or a file that another path needs as a folder, are rejected at publish and at install | They cannot both exist on macOS or Windows, so the installed copy would not match its digest                                                                                   |
 
 **The language trade-off (D11).** Python for the timebox. The client is the piece that would live on every developer's machine, so it is the piece where a single self-contained binary (Rust or Go) would be worth weighing if this were distributed for real. The service and the API would not change.
 
@@ -153,7 +153,7 @@ Details the design doc left open, settled while building:
 - `GET /skills/{name}/versions` returns `{"name": ..., "versions": [...]}` rather than a bare list, so the response names the skill it describes. `POST /skills` also returns `published_at`.
 - `GET /skills/{name}/versions/{version}` with a version that is not a whole number returns 422 `{"error": "invalid_version", "message": ...}`, a fourth error code, rather than the publish-body error.
 - The skills in `tests/skills/` serve both the discovery tests and the demo catalog.
-- Names: `skills-catalog` (repo and package) and `catalog` (command) are working names. TODO(aaron): confirm or rename.
+- Names: `skills-catalog` (repo and package) and `catalog` (command).
 
 Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session listed and could invoke the new skill without a restart, and a new session listed it too. The hidden `.staging-*` folder never appeared as a skill.
 
@@ -175,9 +175,25 @@ Observed with Claude Code 2.1.325: after `retrieve_skill`, the same session list
 
 **Versions tested:** Claude Code 2.1.325, MCP Python SDK (`mcp`) 2.3.0, Python 3.12.16, uv 0.13.8, FastAPI 0.163.1, uvicorn 0.54.0, macOS. Exact versions of everything are in `uv.lock`. No claim is made beyond these.
 
-**How the four hours went:** TODO(aaron)
+**How the four hours went:** I started by reading the whole PRD myself, to understand the problem before involving any tools. I then worked through the design with Fable 5.2 until I was happy with it, and had it write up a design document, which I read in full. Before any code was written, I had Astra 6 review that design independently. From there I moved to Claude Code, where Opus 5.5 wrote an implementation plan. I checked the plan against the design, and Opus 5.5 then did the development work, which went quickly. When the build was done, I had Astra 6 review the implementation against the PRD and the design document. I passed its findings back to Claude Code to fix the gaps, then fixed a couple of small things I found myself. Finally I ran the checks described below by hand. In total it took about 3 hours of my time.
 
-**How AI was used** (what I directed, what I verified by hand, what I changed or rejected): TODO(aaron)
+**How AI was used** (what I directed, what I verified by hand, what I changed or rejected): 
+**What I directed.** I used different models for different jobs. The strongest model, Fable 5.2, handled the design, where judgment matters most. Opus 5.5 wrote the code, because by then the plan was specific enough that the work was mostly execution. Review came from Astra 6, a different model in a different harness, so the work wasn't being graded by the same system that produced it. 
+
+**What I verified by hand.** I read the PRD and the design document in full, and checked the implementation plan against the design before any code was written. Once it was built, I checked it myself rather than relying on the tests: 
+- **Fresh clone.** I cloned the repo into an empty folder, opened a new terminal with no catalog settings, and followed this README word for word. It took 5 minutes from clone to passing tests. 
+- **The demo, in a real assistant session.** In `examples/dev2` I ran the PRD’s example prompts, plus two phrasings of my own that aren’t in the tests: “anything that would help me write a changelog?” and “I need to summarize what shipped this sprint. Do we have something for that?” Both found `release-note-draft`. The retrieved folder matched the original exactly (`diff -r`), with the same file permissions.
+- **Failure paths.** A publish with no description was rejected with an explanation, and the history was unchanged. Asking for a skill that doesn't exist, and searching for something that matches nothing, both got clear answers. 
+- **Updates and local edits.** I went from v1 to v2 and back to v1, then edited the installed copy and asked for the latest. Retrieve refused and left my edit in place, and `catalog status` reported the copy as locally modified. 
+- **The code.** I read all of it, about 300 lines, spending the most time on the publish transaction, the digest function and the install swap. 
+- **The repo.** No database files, secrets or generated files are committed, `uv.lock` is checked in, and the tests pass from a clean checkout. 
+
+**What I changed or rejected.** I didn't accept the design review wholesale. I took most of it: every publish now creates a new version, storage and transfer are simpler, the digest format is unambiguous, and the assistant gets tested in the first 20 minutes of the build. 
+
+I overruled it on three points: 
+- It wanted retrieve to refuse whenever a copy was already installed. That would have broken the PRD's own update flow, so retrieve only refuses when the installed copy has local edits. 
+- It wanted the list of changed files cut from version history. I kept it, because the PRD asks that "the change is visible". 
+- It wanted the line about a single binary removed. I kept it, reworded as a trade-off rather than a plan.
 
 ## What I would build next (Phase 2, the answer to Q1)
 
