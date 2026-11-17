@@ -255,11 +255,11 @@ Write the six files in design doc section 9, covering every clause in its "What 
 
 ## 7. Final checklist
 
-- [ ] `uv run pytest -q` green on a fresh clone
-- [ ] README walk-through works on a fresh clone with nothing typed that is not in the README
-- [ ] The PRD's four prompts work in Claude Code from `examples/dev2`
+- [x] `uv run pytest -q` green on a fresh clone
+- [x] README walk-through works on a fresh clone with nothing typed that is not in the README
+- [x] The PRD's four prompts work in Claude Code from `examples/dev2`
 - [ ] `src/` is under 700 lines (`wc -l src/skills_catalog/*.py`)
-- [ ] `uv.lock` committed; versions in the README match it
-- [ ] No `catalog.db`, `.venv`, `.DS_Store`, or installed skills committed; `examples/dev2/.claude/skills/` holds only `.gitkeep`
-- [ ] `grep -rn "print(" src/skills_catalog` shows hits only in `cli.py`
-- [ ] Every `TODO(aaron)` is listed in the final status note
+- [x] `uv.lock` committed; versions in the README match it
+- [x] No `catalog.db`, `.venv`, `.DS_Store`, or installed skills committed; `examples/dev2/.claude/skills/` holds only `.gitkeep`
+- [x] `grep -rn "print(" src/skills_catalog` shows hits only in `cli.py`
+- [x] Every `TODO(aaron)` is listed in the final status note
